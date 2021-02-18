@@ -3,13 +3,13 @@ kind: Namespace
 metadata:
   labels:
     control-plane: controller-manager
-  name: paddle-system
+  name: {{ .Values.controllernamespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: paddle-leader-election-role
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 rules:
 - apiGroups:
   - ""
@@ -152,7 +152,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: paddle-leader-election-rolebinding
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -160,7 +160,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: default
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -173,7 +173,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: default
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -186,7 +186,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: default
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 ---
 apiVersion: v1
 data:
@@ -205,7 +205,7 @@ data:
 kind: ConfigMap
 metadata:
   name: paddle-manager-config
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 ---
 apiVersion: v1
 kind: Service
@@ -213,7 +213,7 @@ metadata:
   labels:
     control-plane: controller-manager
   name: paddle-controller-manager-metrics-service
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 spec:
   ports:
   - name: https
@@ -228,7 +228,7 @@ metadata:
   labels:
     control-plane: controller-manager
   name: paddle-controller-manager
-  namespace: paddle-system
+  namespace: {{ .Values.controllernamespace }}
 spec:
   replicas: 1
   selector:
@@ -242,10 +242,10 @@ spec:
       containers:
       - args:
         - --leader-elect
-        - --namespace=paddle-system
+        - --namespace={{ .Values.jobnamespace }}
         command:
         - /manager
-        image: registry.baidubce.com/kuizhiqing/paddle-operator:v1
+        image: {{ .Values.image }}
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
