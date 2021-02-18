@@ -47,8 +47,8 @@ undeploy:
 	$(KUSTOMIZE) build config/default | kubectl delete -f -
 
 helm: manifests kustomize
-	$(KUSTOMIZE) build config/crd > deploy/paddle-operator/templates/crd.yaml
-	$(KUSTOMIZE) build config/default > deploy/paddle-operator/templates/controller.yaml
+	$(KUSTOMIZE) build config/crd > charts/paddle-operator/templates/crd.yaml
+	$(KUSTOMIZE) build config/default > charts/paddle-operator/templates/controller.yaml
 
 # Generate manifests e.g. CRD, RBAC etc.
 manifests: controller-gen
