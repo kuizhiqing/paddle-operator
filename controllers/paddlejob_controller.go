@@ -34,6 +34,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+    volcanoV1beta1 "volcano.sh/volcano/pkg/apis/scheduling/v1beta1"
+
 	pdv1 "github.com/paddleflow/paddle-operator/api/v1"
 )
 
@@ -60,6 +62,8 @@ type PaddleJobReconciler struct {
 //+kubebuilder:rbac:groups="",resources=services/status,verbs=get
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=configmaps/status,verbs=get
+//+kubebuilder:rbac:groups=scheduling.volcano.sh,resources=podgroups,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=scheduling.volcano.sh,resources=podgroups/status,verbs=get;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -83,6 +87,10 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	//r.finalize(ctx, &pdj)
 
+    if err := r.syncPodGroup(ctx, &pdj); err != nil {
+		return ctrl.Result{}, err
+    }
+
 	// List all associated pods
 	var childPods corev1.PodList
 	if err := r.List(ctx, &childPods, client.InNamespace(req.Namespace), client.MatchingFields{ctrlRefKey: req.Name}); err != nil {
@@ -100,7 +108,7 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	// clean pod unnecessary
+	// clean unnecessary pods
 	if len(childPods.Items) > pdj.Spec.PS.Replicas+pdj.Spec.Worker.Replicas {
 		for i, pod := range childPods.Items {
 			resType, idx := extractNameIndex(pod.Name)
@@ -117,6 +125,7 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// List all associated svc
 	var svcs corev1.ServiceList
 
+    // create service if using service as intranet
 	if pdj.Spec.Intranet == pdv1.Service {
 		if err := r.List(ctx, &svcs, client.InNamespace(req.Namespace), client.MatchingFields{ctrlRefKey: req.Name}); err != nil {
 			return ctrl.Result{}, err
@@ -215,6 +224,28 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *PaddleJobReconciler) syncPodGroup(ctx context.Context, pdj *pdv1.PaddleJob) error {
+    // Create podgroup first if the job use volcano as scheduler
+	if pdj.Spec.Worker.Template.Spec.SchedulerName == schedulerNameVolcano {
+        var pg volcanoV1beta1.PodGroup
+		if err := r.Get(ctx, req.NamespacedName, &pg); err == nil || !apierrors.IsNotFound(err) {
+		    return err
+        }
+        pg = &volcanoV1beta1.PodGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: job.GetName(),
+			OwnerReferences: []metav1.OwnerReference{
+				*jc.GenOwnerReference(job),
+			},
+		},
+		Spec: v1beta1.PodGroupSpec{
+			MinMember: minAvailable.IntVal,
+		},
+	    }
+    }
+    return nil
 }
 
 func (r *PaddleJobReconciler) getCurrentStatus(ctx context.Context, pdj *pdv1.PaddleJob, childPods corev1.PodList) pdv1.PaddleJobStatus {
