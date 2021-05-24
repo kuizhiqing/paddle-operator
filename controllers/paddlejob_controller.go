@@ -56,10 +56,11 @@ var (
 // PaddleJobReconciler reconciles a PaddleJob object
 type PaddleJobReconciler struct {
 	client.Client
-	Log         logr.Logger
-	Scheme      *runtime.Scheme
-	Recorder    record.EventRecorder
-	HostPortMap map[string]int
+	Log           logr.Logger
+	Scheme        *runtime.Scheme
+	Recorder      record.EventRecorder
+	HostPortMap   map[string]int
+	ElasticServer string
 }
 
 //+kubebuilder:rbac:groups=batch.paddlepaddle.org,resources=paddlejobs,verbs=get;list;watch;create;update;patch;delete
@@ -219,7 +220,8 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Create configmap of global env for all pods after all pods are running
-	if len(pdj.Status.PS.Refs) == pdj.Spec.PS.Replicas && len(pdj.Status.Worker.Refs) == pdj.Spec.Worker.Replicas {
+	// Or job in elastic mode
+	if pdj.Spec.Elastic > 0 || (len(pdj.Status.PS.Refs) == pdj.Spec.PS.Replicas && len(pdj.Status.Worker.Refs) == pdj.Spec.Worker.Replicas) {
 		if pdj.Spec.Intranet == pdv1.Service {
 			if len(pdj.Status.PS.Refs)+len(pdj.Status.Worker.Refs) != len(svcs.Items) {
 				return ctrl.Result{}, nil
@@ -231,6 +233,12 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		cm := constructConfigMap(&pdj, childPods)
 		if cm == nil {
 			return ctrl.Result{Requeue: true}, nil
+		}
+		if pdj.Spec.Elastic > 0 {
+			cm.Data["PADDLE_ELASTIC_SERVER"] = r.ElasticServer
+			cm.Data["PADDLE_ELASTIC_JOB_ID"] = fmt.Sprintf("%s-%s", pdj.Namespace, pdj.Name)
+			cm.Data["PADDLE_ELASTIC_NP"] = fmt.Sprintf("%d", pdj.Spec.Worker.Replicas)
+			cm.Data["PADDLE_ELASTIC_TIMEOUT"] = "60"
 		}
 		if err := ctrl.SetControllerReference(&pdj, cm, r.Scheme); err != nil {
 			log.Error(err, "make reference failed")

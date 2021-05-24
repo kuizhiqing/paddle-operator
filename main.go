@@ -17,7 +17,9 @@ limitations under the License.
 package main
 
 import (
+	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -52,11 +54,13 @@ func init() {
 
 func main() {
 	var metricsAddr string
+	var elasticServer string
 	var namespace string
 	var enableLeaderElection bool
 	var probeAddr string
 	var hostPortRange string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	flag.StringVar(&elasticServer, "elastic-server", "incluster", "The address the elastic endpoint(etcd) binds to.")
 	flag.StringVar(&namespace, "namespace", "", "The namespace the controller binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&hostPortRange, "port-range", "35000,65000", "The address the probe endpoint binds to.")
@@ -98,6 +102,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	if elasticServer == "incluster" {
+		elasticServer = fmt.Sprintf("paddle-elastic-etcd.%s.svc.cluster.local:2379", namespace)
+		setupLog.Info("use incluster elastic server")
+	} else {
+		setupLog.Error(errors.New("parms error"), "invalid elastic server endpoint")
+		os.Exit(1)
+	}
+
 	if err = (&controllers.PaddleJobReconciler{
 		Client:   mgr.GetClient(),
 		Log:      ctrl.Log.WithName("controllers").WithName("PaddleJob"),
@@ -108,6 +120,7 @@ func main() {
 			controllers.HOST_PORT_CUR:   portStart,
 			controllers.HOST_PORT_END:   portEnd,
 		},
+		ElasticServer: elasticServer,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PaddleJob")
 		os.Exit(1)

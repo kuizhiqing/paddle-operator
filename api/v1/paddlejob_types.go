@@ -126,6 +126,9 @@ type PaddleJobSpec struct {
 
 	// Worker describes the spec of worker base on pod template
 	Worker ResourceSpec `json:"worker"`
+
+	// Elastic describes the elastic level of the job
+	Elastic int `json:"elastic,omitempty"`
 }
 
 type ResourceSpec struct {

@@ -219,7 +219,9 @@ func constructPod(pdj *pdv1.PaddleJob, resType string, idx int) (pod *corev1.Pod
 		pod.Spec.HostNetwork = true
 	}
 
-	if pod.Spec.RestartPolicy == "" {
+	if pdj.Spec.Elastic > 0 {
+		pod.Spec.RestartPolicy = "OnFailure"
+	} else if pod.Spec.RestartPolicy == "" {
 		if resType == pdv1.ResourceWorker && pdj.Spec.Intranet == pdv1.Service {
 			pod.Spec.RestartPolicy = "OnFailure"
 		} else {
