@@ -102,12 +102,6 @@ func constructConfigMap(pdj *pdv1.PaddleJob, childPods corev1.PodList) (cm *core
 			}
 		}
 	}
-	var paddle_port string
-	if pdj.Spec.Intranet == pdv1.HostNetwork {
-		paddle_port = pdj.ObjectMeta.Annotations[hostPort]
-	} else {
-		paddle_port = fmt.Sprintf("%d", PADDLE_PORT)
-	}
 	cm = &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{
@@ -118,16 +112,12 @@ func constructConfigMap(pdj *pdv1.PaddleJob, childPods corev1.PodList) (cm *core
 			Namespace:   pdj.Namespace,
 		},
 		Data: map[string]string{
-			"PADDLE_PSERVERS_IP_PORT_LIST":      strings.Join(pservers, ","),
-			"PADDLE_TRAINERS_NUM":               fmt.Sprintf("%d", pdj.Spec.Worker.Replicas),
-			"TRAINER_PORTS_NUM":                 fmt.Sprintf("%d", HOST_PORT_NUM),
-			"PADDLE_HETER_TRAINER_IP_PORT_LIST": "",
-			"PADDLE_PORT":                       paddle_port,
-			"PADDLE_TRAINER_ENDPOINTS":          strings.Join(workers, ","),
-			"PADDLE_TRAINERS":                   strings.Join(workerHosts, ","),
+			"PADDLE_PSERVERS_IP_PORT_LIST": strings.Join(pservers, ","),
+			"PADDLE_TRAINER_ENDPOINTS":     strings.Join(workers, ","),
+			"PADDLE_TRAINERS":              strings.Join(workerHosts, ","),
 		},
 	}
-	// maybe better to use validation webhook to ignore withGloo in collective mode?
+
 	if pdj.Spec.WithGloo > 0 && pdj.Spec.Intranet != pdv1.Service && len(pservers) > 0 {
 		cm.Data["PADDLE_WITH_GLOO"] = fmt.Sprintf("%d", pdj.Spec.WithGloo)
 		cm.Data["PADDLE_GLOO_RENDEZVOUS"] = "3"
@@ -140,9 +130,7 @@ func constructConfigMap(pdj *pdv1.PaddleJob, childPods corev1.PodList) (cm *core
 }
 
 func constructPod(pdj *pdv1.PaddleJob, resType string, idx int) (pod *corev1.Pod) {
-	// metadata is missing due to controller-gen,
-	// c.f. https://github.com/kubernetes-sigs/controller-tools/issues/448
-	// c.f. https://github.com/kubernetes-sigs/controller-tools/pull/539
+
 	name := genPaddleResName(pdj.Name, resType, idx)
 	pod = &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -168,16 +156,6 @@ func constructPod(pdj *pdv1.PaddleJob, resType string, idx int) (pod *corev1.Pod
 		pod.Spec.SchedulerName = schedulerNameVolcano
 	}
 
-	// TODO(kuizhiqing)
-	// initContainer will ensure pods are ready, then create cm to remove resource not ready error
-	// Now it simply wait, since kubernetes ensure cm created before pod running indeed
-	//ic := corev1.Container{
-	//	Name:    "init-paddle",
-	//	Image:   "busybox:1.28",
-	//	Command: []string{"sh", "-c", "sleep 12"},
-	//}
-	//pod.Spec.InitContainers = append(pod.Spec.InitContainers, ic)
-
 	envIP := corev1.EnvVar{
 		Name: "POD_IP",
 	}
@@ -190,6 +168,14 @@ func constructPod(pdj *pdv1.PaddleJob, resType string, idx int) (pod *corev1.Pod
 			},
 		}
 	}
+
+	var paddle_port string
+	if pdj.Spec.Intranet == pdv1.HostNetwork {
+		paddle_port = pdj.ObjectMeta.Annotations[hostPort]
+	} else {
+		paddle_port = fmt.Sprintf("%d", PADDLE_PORT)
+	}
+
 	envRank := corev1.EnvVar{
 		Name:  "PADDLE_TRAINER_ID",
 		Value: fmt.Sprintf("%d", idx),
@@ -202,16 +188,48 @@ func constructPod(pdj *pdv1.PaddleJob, resType string, idx int) (pod *corev1.Pod
 		Name:  "PADDLE_TRAINING_ROLE",
 		Value: pdv1.TrainingRole[resType],
 	}
-	pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, envIP, envRank, envRole, envRole2)
-
-	envF := corev1.EnvFromSource{
-		ConfigMapRef: &corev1.ConfigMapEnvSource{
-			LocalObjectReference: corev1.LocalObjectReference{
-				Name: pdj.Name,
-			},
-		},
+	envNum := corev1.EnvVar{
+		Name:  "PADDLE_TRAINERS_NUM",
+		Value: fmt.Sprintf("%d", pdj.Spec.Worker.Replicas),
 	}
-	pod.Spec.Containers[0].EnvFrom = append(pod.Spec.Containers[0].EnvFrom, envF)
+	envPortsNum := corev1.EnvVar{
+		Name:  "TRAINER_PORTS_NUM",
+		Value: fmt.Sprintf("%d", HOST_PORT_NUM),
+	}
+	envPort := corev1.EnvVar{
+		Name:  "PADDLE_PORT",
+		Value: paddle_port,
+	}
+
+	pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, envIP, envRank, envRole, envRole2, envNum, envPortsNum, envPort)
+
+	if pdj.Spec.Elastic > 0 {
+		envJobID := corev1.EnvVar{
+			Name:  "PADDLE_ELASTIC_JOB_ID",
+			Value: fmt.Sprintf("%s-%s", pdj.Namespace, pdj.Name),
+		}
+		envNP := corev1.EnvVar{
+			Name:  "PADDLE_ELASTIC_NP",
+			Value: fmt.Sprintf("%d", pdj.Spec.Worker.Replicas),
+		}
+		envTimeout := corev1.EnvVar{
+			Name:  "PADDLE_ELASTIC_TIMEOUT",
+			Value: "60",
+		}
+
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, envJobID, envNP, envTimeout)
+
+	} else {
+		envF := corev1.EnvFromSource{
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: pdj.Name,
+				},
+			},
+		}
+
+		pod.Spec.Containers[0].EnvFrom = append(pod.Spec.Containers[0].EnvFrom, envF)
+	}
 
 	if pdj.Spec.Intranet == pdv1.Service {
 		pod.Spec.Containers[0].Ports = append(pod.Spec.Containers[0].Ports, corev1.ContainerPort{ContainerPort: PADDLE_PORT})

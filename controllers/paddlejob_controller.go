@@ -43,7 +43,7 @@ const (
 	HOST_PORT_END   = "port.end"
 	HOST_PORT_CUR   = "port.cur"
 	HOST_PORT_NUM   = 20
-	PADDLE_PORT     = 2379
+	PADDLE_PORT     = 12379
 )
 
 var (
@@ -191,6 +191,13 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return false
 		}
 		pod := constructPod(&pdj, resType, idx)
+		if pdj.Spec.Elastic > 0 {
+			pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
+				corev1.EnvVar{
+					Name:  "PADDLE_ELASTIC_SERVER",
+					Value: r.ElasticServer,
+				})
+		}
 		if err := ctrl.SetControllerReference(&pdj, pod, r.Scheme); err != nil {
 			log.Error(err, "make reference failed")
 			return false
@@ -221,7 +228,7 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Create configmap of global env for all pods after all pods are running
 	// Or job in elastic mode
-	if pdj.Spec.Elastic > 0 || (len(pdj.Status.PS.Refs) == pdj.Spec.PS.Replicas && len(pdj.Status.Worker.Refs) == pdj.Spec.Worker.Replicas) {
+	if pdj.Spec.Elastic == 0 && len(pdj.Status.PS.Refs) == pdj.Spec.PS.Replicas && len(pdj.Status.Worker.Refs) == pdj.Spec.Worker.Replicas {
 		if pdj.Spec.Intranet == pdv1.Service {
 			if len(pdj.Status.PS.Refs)+len(pdj.Status.Worker.Refs) != len(svcs.Items) {
 				return ctrl.Result{}, nil
@@ -233,12 +240,6 @@ func (r *PaddleJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		cm := constructConfigMap(&pdj, childPods)
 		if cm == nil {
 			return ctrl.Result{Requeue: true}, nil
-		}
-		if pdj.Spec.Elastic > 0 {
-			cm.Data["PADDLE_ELASTIC_SERVER"] = r.ElasticServer
-			cm.Data["PADDLE_ELASTIC_JOB_ID"] = fmt.Sprintf("%s-%s", pdj.Namespace, pdj.Name)
-			cm.Data["PADDLE_ELASTIC_NP"] = fmt.Sprintf("%d", pdj.Spec.Worker.Replicas)
-			cm.Data["PADDLE_ELASTIC_TIMEOUT"] = "60"
 		}
 		if err := ctrl.SetControllerReference(&pdj, cm, r.Scheme); err != nil {
 			log.Error(err, "make reference failed")
