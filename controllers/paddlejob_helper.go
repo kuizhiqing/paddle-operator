@@ -28,9 +28,7 @@ import (
 )
 
 const (
-	initContainerName            = "init-paddle"
-	schedulingPodGroupAnnotation = "scheduling.k8s.io/group-name"
-	schedulerNameVolcano         = "volcano"
+	initContainerName = "init-paddle"
 )
 
 func getPaddleJobPhase(pdj *pdv1.PaddleJob) pdv1.PaddleJobPhase {
@@ -39,17 +37,29 @@ func getPaddleJobPhase(pdj *pdv1.PaddleJob) pdv1.PaddleJobPhase {
 		return pdv1.Completed
 	} else if pdj.Status.Phase == pdv1.Failed {
 		return pdv1.Failed
-	} else if pdj.Spec.PS.Replicas == pdj.Status.PS.Running && pdj.Spec.Worker.Replicas == pdj.Status.Worker.Running {
-		return pdv1.Running
 	} else if pdj.Status.PS.Failed > 0 || pdj.Status.Worker.Failed > 0 {
+		if pdj.Status.CompletionTime != nil {
+			tmp := metav1.Now()
+			pdj.Status.CompletionTime = &tmp
+		}
 		return pdv1.Failed
-	} else if pdj.Spec.PS.Replicas >= pdj.Status.PS.Succeeded && pdj.Spec.Worker.Replicas == pdj.Status.Worker.Succeeded {
+	} else if pdj.Status.PS.Running > 0 || pdj.Status.Worker.Running > 0 {
+		if pdj.Status.StartTime != nil {
+			tmp := metav1.Now()
+			pdj.Status.StartTime = &tmp
+		}
+		return pdv1.Running
+	} else if pdj.Spec.PS.Replicas == pdj.Status.PS.Succeeded && pdj.Spec.Worker.Replicas == pdj.Status.Worker.Succeeded {
+		if pdj.Status.CompletionTime != nil {
+			tmp := metav1.Now()
+			pdj.Status.CompletionTime = &tmp
+		}
 		return pdv1.Completed
 	} else if pdj.Status.PS.Pending > 0 || pdj.Status.Worker.Pending > 0 {
 		return pdv1.Starting
 	}
 
-	return pdv1.Starting
+	return pdv1.Unknown
 }
 
 func getPaddleJobMode(pdj *pdv1.PaddleJob) pdv1.PaddleJobMode {
@@ -132,29 +142,29 @@ func constructConfigMap(pdj *pdv1.PaddleJob, childPods corev1.PodList) (cm *core
 func constructPod(pdj *pdv1.PaddleJob, resType string, idx int) (pod *corev1.Pod) {
 
 	name := genPaddleResName(pdj.Name, resType, idx)
-	pod = &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{
-				pdv1.ResourceName: name,
-				pdv1.ResourceType: resType,
-			},
-			Annotations: map[string]string{
-				pdv1.ResourceAnnotation: resType,
-			},
-			Name:      name,
-			Namespace: pdj.Namespace,
-		},
-	}
+
+	pod = &corev1.Pod{}
 	if resType == pdv1.ResourcePS {
+		pod.ObjectMeta = *pdj.Spec.PS.Template.ObjectMeta.DeepCopy()
 		pod.Spec = *pdj.Spec.PS.Template.Spec.DeepCopy()
 	} else {
+		pod.ObjectMeta = *pdj.Spec.Worker.Template.ObjectMeta.DeepCopy()
 		pod.Spec = *pdj.Spec.Worker.Template.Spec.DeepCopy()
 	}
 
-	if pdj.Spec.Worker.Template.Spec.SchedulerName == schedulerNameVolcano {
-		pod.ObjectMeta.Annotations[schedulingPodGroupAnnotation] = pdj.Name
-		pod.Spec.SchedulerName = schedulerNameVolcano
+	if pod.ObjectMeta.Labels == nil {
+		pod.ObjectMeta.Labels = map[string]string{}
 	}
+	pod.ObjectMeta.Labels[pdv1.ResourceName] = name
+	pod.ObjectMeta.Labels[pdv1.ResourceType] = resType
+
+	if pod.ObjectMeta.Annotations == nil {
+		pod.ObjectMeta.Annotations = map[string]string{}
+	}
+	pod.ObjectMeta.Annotations[pdv1.ResourceAnnotation] = resType
+
+	pod.ObjectMeta.Name = name
+	pod.ObjectMeta.Namespace = pdj.Namespace
 
 	envIP := corev1.EnvVar{
 		Name: "POD_IP",

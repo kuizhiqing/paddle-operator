@@ -5682,6 +5682,9 @@ spec:
           type: object
         status:
           properties:
+            completionTime:
+              format: date-time
+              type: string
             elastic:
               type: string
             mode:
@@ -5726,6 +5729,9 @@ spec:
                 unknown:
                   type: integer
               type: object
+            startTime:
+              format: date-time
+              type: string
             worker:
               properties:
                 failed:
